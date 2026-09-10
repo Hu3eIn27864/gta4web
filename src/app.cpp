@@ -1,7 +1,11 @@
 #include "gta4web/app.hpp"
 #include "camera.hpp"
 #include "math.hpp"
+#include "../engine/core/fixed_timestep.hpp"
+#include "../engine/vehicles/input.hpp"
+#include "../engine/vehicles/vehicle.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 #include <GLES2/gl2.h>
@@ -12,18 +16,16 @@ namespace {
 
 using gta4web::math::Mat4;
 using gta4web::renderer::Camera;
+using gta4web::vehicles::Vehicle;
+using gta4web::vehicles::VehicleInputState;
 
 GLuint compile_shader(GLenum type, const char* source) {
     const GLuint shader = glCreateShader(type);
     glShaderSource(shader, 1, &source, nullptr);
     glCompileShader(shader);
-
     GLint ok = GL_FALSE;
     glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
-    if (ok == GL_FALSE) {
-        glDeleteShader(shader);
-        return 0;
-    }
+    if (ok == GL_FALSE) { glDeleteShader(shader); return 0; }
     return shader;
 }
 
@@ -31,86 +33,115 @@ GLuint create_program() {
     static constexpr const char* vertex_source = R"GLSL(
         attribute vec3 a_position;
         uniform mat4 u_mvp;
-        varying float v_depth;
-
-        void main() {
-            vec4 world = vec4(a_position, 1.0);
-            gl_Position = u_mvp * world;
-            v_depth = world.z;
-        }
+        void main() { gl_Position = u_mvp * vec4(a_position, 1.0); }
     )GLSL";
-
     static constexpr const char* fragment_source = R"GLSL(
         precision mediump float;
-        varying float v_depth;
-
-        void main() {
-            float light = clamp(1.0 - abs(v_depth) * 0.12, 0.3, 1.0);
-            gl_FragColor = vec4(0.10 * light, 0.50 * light, 1.0 * light, 1.0);
-        }
+        uniform vec4 u_color;
+        void main() { gl_FragColor = u_color; }
     )GLSL";
-
-    const GLuint vertex_shader = compile_shader(GL_VERTEX_SHADER, vertex_source);
-    const GLuint fragment_shader = compile_shader(GL_FRAGMENT_SHADER, fragment_source);
-    if (!vertex_shader || !fragment_shader) {
-        return 0;
-    }
-
-    const GLuint program = glCreateProgram();
-    glAttachShader(program, vertex_shader);
-    glAttachShader(program, fragment_shader);
-    glBindAttribLocation(program, 0, "a_position");
-    glLinkProgram(program);
-    glDeleteShader(vertex_shader);
-    glDeleteShader(fragment_shader);
-
+    const GLuint vs = compile_shader(GL_VERTEX_SHADER, vertex_source);
+    const GLuint fs = compile_shader(GL_FRAGMENT_SHADER, fragment_source);
+    if (!vs || !fs) return 0;
+    const GLuint result = glCreateProgram();
+    glAttachShader(result, vs); glAttachShader(result, fs);
+    glBindAttribLocation(result, 0, "a_position");
+    glLinkProgram(result);
+    glDeleteShader(vs); glDeleteShader(fs);
     GLint linked = GL_FALSE;
-    glGetProgramiv(program, GL_LINK_STATUS, &linked);
-    if (linked == GL_FALSE) {
-        glDeleteProgram(program);
-        return 0;
-    }
-    return program;
+    glGetProgramiv(result, GL_LINK_STATUS, &linked);
+    if (linked == GL_FALSE) { glDeleteProgram(result); return 0; }
+    return result;
 }
 
 constexpr float cube_vertices[] = {
-    -1,-1,-1,  1,-1,-1,  1, 1,-1,  -1,-1,-1,  1,1,-1,  -1,1,-1,
-    -1,-1, 1,  1,-1, 1,  1, 1, 1,  -1,-1, 1,  1,1,1,  -1,1,1,
-    -1,-1,-1, -1,1,-1, -1,1,1,  -1,-1,-1, -1,1,1,  -1,-1,1,
-     1,-1,-1,  1,1,-1,  1,1,1,   1,-1,-1,  1,1,1,   1,-1,1,
-    -1,-1,-1,  1,-1,-1,  1,-1,1, -1,-1,-1,  1,-1,1, -1,-1,1,
-    -1,1,-1,   1,1,-1,   1,1,1,  -1,1,-1,   1,1,1,  -1,1,1
+    -1,-1,-1, 1,-1,-1, 1,1,-1, -1,-1,-1, 1,1,-1, -1,1,-1,
+    -1,-1,1, 1,-1,1, 1,1,1, -1,-1,1, 1,1,1, -1,1,1,
+    -1,-1,-1, -1,1,-1, -1,1,1, -1,-1,-1, -1,1,1, -1,-1,1,
+    1,-1,-1, 1,1,-1, 1,1,1, 1,-1,-1, 1,1,1, 1,-1,1,
+    -1,-1,-1, 1,-1,-1, 1,-1,1, -1,-1,-1, 1,-1,1, -1,-1,1,
+    -1,1,-1, 1,1,-1, 1,1,1, -1,1,-1, 1,1,1, -1,1,1
 };
 
 GLuint program = 0;
 GLint mvp_uniform = -1;
+GLint color_uniform = -1;
 Camera camera;
+Vehicle vehicle;
+VehicleInputState input;
+gta4web::core::FixedTimestep fixed_step;
+
+enum KeyCode : int { KeyW = 87, KeyA = 65, KeyS = 83, KeyD = 68, KeySpace = 32 };
+
+EM_BOOL on_key(int event_type, const EmscriptenKeyboardEvent* event, void*) {
+    const bool pressed = event_type == EMSCRIPTEN_EVENT_KEYDOWN;
+    if (event->repeat && pressed) return EM_TRUE;
+    const int code = event->keyCode;
+    if (code == KeyW) input.press_forward(pressed);
+    else if (code == KeyA) input.press_left(pressed);
+    else if (code == KeyS) input.press_reverse(pressed);
+    else if (code == KeyD) input.press_right(pressed);
+    else if (code == KeySpace) input.press_handbrake(pressed);
+    else return EM_FALSE;
+    return EM_TRUE;
+}
 
 void resize_canvas() {
-    int width = 0;
-    int height = 0;
+    int width = 0, height = 0;
     if (emscripten_get_canvas_element_size("#canvas", &width, &height) == EMSCRIPTEN_RESULT_SUCCESS) {
         glViewport(0, 0, width, height);
-        camera.set_aspect(static_cast<float>(width) / static_cast<float>(height > 0 ? height : 1));
+        camera.set_aspect(static_cast<float>(width) / static_cast<float>(std::max(height, 1)));
     }
 }
 
-void render_frame() {
-    const float time = static_cast<float>(emscripten_get_now() * 0.001);
-    resize_canvas();
-
-    const Mat4 model = gta4web::math::multiply(
-        Mat4::translation({0.0f, 0.0f, -5.0f}),
-        Mat4::rotation_y(time));
+void draw_cube(const Mat4& model, float r, float g, float b) {
     const Mat4 mvp = gta4web::math::multiply(camera.projection(), model);
+    glUniformMatrix4fv(mvp_uniform, 1, GL_FALSE, mvp.m);
+    glUniform4f(color_uniform, r, g, b, 1.0f);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, cube_vertices);
+    glEnableVertexAttribArray(0);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+}
+
+void update_vehicle(double frame_seconds) {
+    fixed_step.advance(frame_seconds, [](double step) {
+        vehicle.update(input.sample(), static_cast<float>(step));
+    });
+}
+
+void render_frame() {
+    static double last_time = emscripten_get_now() * 0.001;
+    const double now = emscripten_get_now() * 0.001;
+    const double frame_seconds = now - last_time;
+    last_time = now;
+
+    resize_canvas();
+    update_vehicle(std::clamp(frame_seconds, 0.0, 0.25));
+
+    const auto& state = vehicle.state();
+    const float follow_distance = 8.0f;
+    const float follow_height = 4.5f;
+    const float forward_x = std::sin(state.yaw);
+    const float forward_z = std::cos(state.yaw);
+    camera.set_position({
+        state.position.x - forward_x * follow_distance,
+        follow_height,
+        state.position.z - forward_z * follow_distance
+    });
 
     glClearColor(0.025f, 0.035f, 0.055f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glUseProgram(program);
-    glUniformMatrix4fv(mvp_uniform, 1, GL_FALSE, mvp.m);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, cube_vertices);
-    glEnableVertexAttribArray(0);
-    glDrawArrays(GL_TRIANGLES, 0, 36);
+
+    const Mat4 ground = gta4web::math::multiply(
+        Mat4::translation({state.position.x, -1.05f, state.position.z}),
+        Mat4::rotation_y(0.0f));
+    draw_cube(ground, 0.18f, 0.20f, 0.23f);
+
+    const Mat4 car = gta4web::math::multiply(
+        Mat4::translation({state.position.x, 0.0f, state.position.z}),
+        Mat4::rotation_y(state.yaw));
+    draw_cube(car, 0.85f, 0.12f, 0.08f);
 }
 
 } // namespace
@@ -119,35 +150,29 @@ namespace gta4web {
 
 bool App::initialize() {
     program = create_program();
-    if (!program) {
-        return false;
-    }
-
+    if (!program) return false;
     mvp_uniform = glGetUniformLocation(program, "u_mvp");
+    color_uniform = glGetUniformLocation(program, "u_color");
     glEnable(GL_DEPTH_TEST);
+    camera.set_clip_planes(0.1f, 2000.0f);
+    vehicle.state().position = {0.0f, 0.0f, 0.0f};
+    emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_TRUE, on_key);
+    emscripten_set_keyup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_TRUE, on_key);
     resize_canvas();
     return true;
 }
 
-void App::frame(double) {
-    render_frame();
-}
+void App::frame(double) { render_frame(); }
 
 void App::shutdown() {
-    if (program) {
-        glDeleteProgram(program);
-        program = 0;
-    }
+    if (program) { glDeleteProgram(program); program = 0; }
 }
 
 } // namespace gta4web
 
 int main() {
     gta4web::App app;
-    if (!app.initialize()) {
-        return 1;
-    }
-
+    if (!app.initialize()) return 1;
     emscripten_set_main_loop([]() { render_frame(); }, 0, EM_TRUE);
     return 0;
 }
