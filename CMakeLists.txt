@@ -16,6 +16,7 @@ add_executable(gta4_web
     engine/physics/rigid_body.cpp
     engine/physics/physics_world.cpp
     engine/vehicles/vehicle.cpp
+    engine/vehicles/input.cpp
 )
 
 target_include_directories(gta4_web PRIVATE
