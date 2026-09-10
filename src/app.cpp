@@ -1,9 +1,9 @@
 #include "gta4web/app.hpp"
 #include "camera.hpp"
 #include "math.hpp"
-#include "../engine/core/fixed_timestep.hpp"
-#include "../engine/vehicles/input.hpp"
-#include "../engine/vehicles/vehicle.hpp"
+#include "core/fixed_timestep.hpp"
+#include "vehicles/input.hpp"
+#include "vehicles/vehicle.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -13,7 +13,6 @@
 #include <emscripten/html5.h>
 
 namespace {
-
 using gta4web::math::Mat4;
 using gta4web::renderer::Camera;
 using gta4web::vehicles::Vehicle;
@@ -76,13 +75,14 @@ enum KeyCode : int { KeyW = 87, KeyA = 65, KeyS = 83, KeyD = 68, KeySpace = 32 }
 EM_BOOL on_key(int event_type, const EmscriptenKeyboardEvent* event, void*) {
     const bool pressed = event_type == EMSCRIPTEN_EVENT_KEYDOWN;
     if (event->repeat && pressed) return EM_TRUE;
-    const int code = event->keyCode;
-    if (code == KeyW) input.press_forward(pressed);
-    else if (code == KeyA) input.press_left(pressed);
-    else if (code == KeyS) input.press_reverse(pressed);
-    else if (code == KeyD) input.press_right(pressed);
-    else if (code == KeySpace) input.press_handbrake(pressed);
-    else return EM_FALSE;
+    switch (event->keyCode) {
+    case KeyW: input.press_forward(pressed); break;
+    case KeyA: input.press_left(pressed); break;
+    case KeyS: input.press_reverse(pressed); break;
+    case KeyD: input.press_right(pressed); break;
+    case KeySpace: input.press_handbrake(pressed); break;
+    default: return EM_FALSE;
+    }
     return EM_TRUE;
 }
 
@@ -103,43 +103,30 @@ void draw_cube(const Mat4& model, float r, float g, float b) {
     glDrawArrays(GL_TRIANGLES, 0, 36);
 }
 
-void update_vehicle(double frame_seconds) {
-    fixed_step.advance(frame_seconds, [](double step) {
-        vehicle.update(input.sample(), static_cast<float>(step));
-    });
-}
-
 void render_frame() {
     static double last_time = emscripten_get_now() * 0.001;
     const double now = emscripten_get_now() * 0.001;
-    const double frame_seconds = now - last_time;
+    const double frame_seconds = std::clamp(now - last_time, 0.0, 0.25);
     last_time = now;
 
     resize_canvas();
-    update_vehicle(std::clamp(frame_seconds, 0.0, 0.25));
+    fixed_step.advance(frame_seconds, [](double step) {
+        vehicle.update(input.sample(), static_cast<float>(step));
+    });
 
     const auto& state = vehicle.state();
-    const float follow_distance = 8.0f;
-    const float follow_height = 4.5f;
-    const float forward_x = std::sin(state.yaw);
-    const float forward_z = std::cos(state.yaw);
-    camera.set_position({
-        state.position.x - forward_x * follow_distance,
-        follow_height,
-        state.position.z - forward_z * follow_distance
-    });
+    const float view_z = -5.0f;
+    const float ground_z = state.position.z + view_z;
 
     glClearColor(0.025f, 0.035f, 0.055f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glUseProgram(program);
 
-    const Mat4 ground = gta4web::math::multiply(
-        Mat4::translation({state.position.x, -1.05f, state.position.z}),
-        Mat4::rotation_y(0.0f));
-    draw_cube(ground, 0.18f, 0.20f, 0.23f);
+    // A simple oversized floor marker keeps the prototype readable while driving.
+    draw_cube(Mat4::translation({state.position.x, -1.1f, ground_z}), 0.16f, 0.18f, 0.21f);
 
     const Mat4 car = gta4web::math::multiply(
-        Mat4::translation({state.position.x, 0.0f, state.position.z}),
+        Mat4::translation({0.0f, 0.0f, view_z}),
         Mat4::rotation_y(state.yaw));
     draw_cube(car, 0.85f, 0.12f, 0.08f);
 }
@@ -154,7 +141,6 @@ bool App::initialize() {
     mvp_uniform = glGetUniformLocation(program, "u_mvp");
     color_uniform = glGetUniformLocation(program, "u_color");
     glEnable(GL_DEPTH_TEST);
-    camera.set_clip_planes(0.1f, 2000.0f);
     vehicle.state().position = {0.0f, 0.0f, 0.0f};
     emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_TRUE, on_key);
     emscripten_set_keyup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_TRUE, on_key);
