@@ -1,4 +1,6 @@
 #include "gta4web/app.hpp"
+#include "camera.hpp"
+#include "math.hpp"
 
 #include <cmath>
 
@@ -7,6 +9,9 @@
 #include <emscripten/html5.h>
 
 namespace {
+
+using gta4web::math::Mat4;
+using gta4web::renderer::Camera;
 
 GLuint compile_shader(GLenum type, const char* source) {
     const GLuint shader = glCreateShader(type);
@@ -25,22 +30,13 @@ GLuint compile_shader(GLenum type, const char* source) {
 GLuint create_program() {
     static constexpr const char* vertex_source = R"GLSL(
         attribute vec3 a_position;
-        uniform float u_time;
+        uniform mat4 u_mvp;
         varying float v_depth;
 
         void main() {
-            float c = cos(u_time);
-            float s = sin(u_time);
-            mat3 rotation = mat3(
-                c, 0.0, s,
-                0.0, 1.0, 0.0,
-                -s, 0.0, c
-            );
-            vec3 p = rotation * a_position;
-            p.z -= 4.0;
-            float perspective = 1.0 / max(0.5, -p.z);
-            gl_Position = vec4(p.x * perspective, p.y * perspective, p.z / 6.0, 1.0);
-            v_depth = -p.z;
+            vec4 world = vec4(a_position, 1.0);
+            gl_Position = u_mvp * world;
+            v_depth = world.z;
         }
     )GLSL";
 
@@ -49,8 +45,8 @@ GLuint create_program() {
         varying float v_depth;
 
         void main() {
-            float light = clamp(1.25 - v_depth * 0.18, 0.25, 1.0);
-            gl_FragColor = vec4(0.12 * light, 0.55 * light, 1.0 * light, 1.0);
+            float light = clamp(1.0 - abs(v_depth) * 0.12, 0.3, 1.0);
+            gl_FragColor = vec4(0.10 * light, 0.50 * light, 1.0 * light, 1.0);
         }
     )GLSL";
 
@@ -65,7 +61,6 @@ GLuint create_program() {
     glAttachShader(program, fragment_shader);
     glBindAttribLocation(program, 0, "a_position");
     glLinkProgram(program);
-
     glDeleteShader(vertex_shader);
     glDeleteShader(fragment_shader);
 
@@ -79,39 +74,42 @@ GLuint create_program() {
 }
 
 constexpr float cube_vertices[] = {
-    -1, -1, -1,  1, -1, -1,  1,  1, -1,
-    -1, -1, -1,  1,  1, -1, -1,  1, -1,
-    -1, -1,  1,  1, -1,  1,  1,  1,  1,
-    -1, -1,  1,  1,  1,  1, -1,  1,  1,
-    -1, -1, -1, -1,  1, -1, -1,  1,  1,
-    -1, -1, -1, -1,  1,  1, -1, -1,  1,
-     1, -1, -1,  1,  1, -1,  1,  1,  1,
-     1, -1, -1,  1,  1,  1,  1, -1,  1,
-    -1, -1, -1,  1, -1, -1,  1, -1,  1,
-    -1, -1, -1,  1, -1,  1, -1, -1,  1,
-    -1,  1, -1,  1,  1, -1,  1,  1,  1,
-    -1,  1, -1,  1,  1,  1, -1,  1,  1
+    -1,-1,-1,  1,-1,-1,  1, 1,-1,  -1,-1,-1,  1,1,-1,  -1,1,-1,
+    -1,-1, 1,  1,-1, 1,  1, 1, 1,  -1,-1, 1,  1,1,1,  -1,1,1,
+    -1,-1,-1, -1,1,-1, -1,1,1,  -1,-1,-1, -1,1,1,  -1,-1,1,
+     1,-1,-1,  1,1,-1,  1,1,1,   1,-1,-1,  1,1,1,   1,-1,1,
+    -1,-1,-1,  1,-1,-1,  1,-1,1, -1,-1,-1,  1,-1,1, -1,-1,1,
+    -1,1,-1,   1,1,-1,   1,1,1,  -1,1,-1,   1,1,1,  -1,1,1
 };
 
 GLuint program = 0;
-GLint time_uniform = -1;
+GLint mvp_uniform = -1;
+Camera camera;
 
 void resize_canvas() {
     int width = 0;
     int height = 0;
     if (emscripten_get_canvas_element_size("#canvas", &width, &height) == EMSCRIPTEN_RESULT_SUCCESS) {
         glViewport(0, 0, width, height);
+        camera.set_aspect(static_cast<float>(width) / static_cast<float>(height > 0 ? height : 1));
     }
 }
 
 void render_frame() {
-    const double time = emscripten_get_now() * 0.001;
+    const float time = static_cast<float>(emscripten_get_now() * 0.001);
     resize_canvas();
+
+    const Mat4 model = gta4web::math::multiply(
+        Mat4::translation({0.0f, 0.0f, -5.0f}),
+        Mat4::rotation_y(time));
+    const Mat4 mvp = gta4web::math::multiply(camera.projection(), model);
 
     glClearColor(0.025f, 0.035f, 0.055f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glUseProgram(program);
-    glUniform1f(time_uniform, static_cast<float>(time));
+    glUniformMatrix4fv(mvp_uniform, 1, GL_FALSE, mvp.m);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, cube_vertices);
+    glEnableVertexAttribArray(0);
     glDrawArrays(GL_TRIANGLES, 0, 36);
 }
 
@@ -125,7 +123,7 @@ bool App::initialize() {
         return false;
     }
 
-    time_uniform = glGetUniformLocation(program, "u_time");
+    mvp_uniform = glGetUniformLocation(program, "u_mvp");
     glEnable(GL_DEPTH_TEST);
     resize_canvas();
     return true;
