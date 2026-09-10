@@ -1,83 +1,13 @@
 #include "math.hpp"
-
 #include <algorithm>
-
 namespace gta4web::math {
-
-Mat4 Mat4::identity() {
-    Mat4 result{};
-    result.m[0] = 1.0f;
-    result.m[5] = 1.0f;
-    result.m[10] = 1.0f;
-    result.m[15] = 1.0f;
-    return result;
+Mat4 Mat4::identity(){ Mat4 r{}; r.m[0]=r.m[5]=r.m[10]=r.m[15]=1.0f; return r; }
+Mat4 Mat4::perspective(float fov,float aspect,float near_p,float far_p){ const float f=1.0f/std::tan(fov*0.5f); const float a=std::max(aspect,0.001f); Mat4 r{}; r.m[0]=f/a; r.m[5]=f; r.m[10]=(far_p+near_p)/(near_p-far_p); r.m[11]=-1.0f; r.m[14]=2.0f*far_p*near_p/(near_p-far_p); return r; }
+Mat4 Mat4::translation(Vec3 v){ Mat4 r=identity(); r.m[12]=v.x; r.m[13]=v.y; r.m[14]=v.z; return r; }
+Mat4 Mat4::rotation_x(float a){ const float c=std::cos(a),s=std::sin(a); Mat4 r=identity(); r.m[5]=c;r.m[6]=s;r.m[9]=-s;r.m[10]=c;return r; }
+Mat4 Mat4::rotation_y(float a){ const float c=std::cos(a),s=std::sin(a); Mat4 r=identity(); r.m[0]=c;r.m[2]=-s;r.m[8]=s;r.m[10]=c;return r; }
+Mat4 Mat4::rotation_z(float a){ const float c=std::cos(a),s=std::sin(a); Mat4 r=identity(); r.m[0]=c;r.m[1]=s;r.m[4]=-s;r.m[5]=c;return r; }
+Mat4 Mat4::scale(Vec3 v){ Mat4 r{}; r.m[0]=v.x;r.m[5]=v.y;r.m[10]=v.z;r.m[15]=1.0f;return r; }
+Mat4 Mat4::look_at(Vec3 eye,Vec3 target,Vec3 up){ const Vec3 f=normalize(target-eye),r=normalize(cross(f,up)),u=cross(r,f); Mat4 m=identity(); m.m[0]=r.x;m.m[4]=r.y;m.m[8]=r.z;m.m[1]=u.x;m.m[5]=u.y;m.m[9]=u.z;m.m[2]=-f.x;m.m[6]=-f.y;m.m[10]=-f.z;m.m[12]=-dot(r,eye);m.m[13]=-dot(u,eye);m.m[14]=dot(f,eye);return m; }
+Mat4 multiply(const Mat4&a,const Mat4&b){ Mat4 r{}; for(int c=0;c<4;++c)for(int row=0;row<4;++row){float v=0;for(int k=0;k<4;++k)v+=a.m[k*4+row]*b.m[c*4+k];r.m[c*4+row]=v;}return r; }
 }
-
-Mat4 Mat4::perspective(float fov_y_radians, float aspect, float near_plane, float far_plane) {
-    const float safe_aspect = std::max(aspect, 0.001f);
-    const float f = 1.0f / std::tan(fov_y_radians * 0.5f);
-    Mat4 result{};
-    result.m[0] = f / safe_aspect;
-    result.m[5] = f;
-    result.m[10] = (far_plane + near_plane) / (near_plane - far_plane);
-    result.m[11] = -1.0f;
-    result.m[14] = (2.0f * far_plane * near_plane) / (near_plane - far_plane);
-    return result;
-}
-
-Mat4 Mat4::translation(Vec3 value) {
-    Mat4 result = identity();
-    result.m[12] = value.x;
-    result.m[13] = value.y;
-    result.m[14] = value.z;
-    return result;
-}
-
-Mat4 Mat4::rotation_y(float radians) {
-    const float c = std::cos(radians);
-    const float s = std::sin(radians);
-    Mat4 result = identity();
-    result.m[0] = c;
-    result.m[2] = -s;
-    result.m[8] = s;
-    result.m[10] = c;
-    return result;
-}
-
-Mat4 Mat4::scale(Vec3 value) {
-    Mat4 result{};
-    result.m[0] = value.x;
-    result.m[5] = value.y;
-    result.m[10] = value.z;
-    result.m[15] = 1.0f;
-    return result;
-}
-
-Mat4 Mat4::look_at(Vec3 eye, Vec3 target, Vec3 up) {
-    const Vec3 forward = normalize(target - eye);
-    const Vec3 right = normalize(cross(forward, up));
-    const Vec3 corrected_up = cross(right, forward);
-
-    Mat4 result = identity();
-    result.m[0] = right.x; result.m[4] = right.y; result.m[8] = right.z;
-    result.m[1] = corrected_up.x; result.m[5] = corrected_up.y; result.m[9] = corrected_up.z;
-    result.m[2] = -forward.x; result.m[6] = -forward.y; result.m[10] = -forward.z;
-    result.m[12] = -dot(right, eye);
-    result.m[13] = -dot(corrected_up, eye);
-    result.m[14] = dot(forward, eye);
-    return result;
-}
-
-Mat4 multiply(const Mat4& a, const Mat4& b) {
-    Mat4 result{};
-    for (int column = 0; column < 4; ++column) {
-        for (int row = 0; row < 4; ++row) {
-            float value = 0.0f;
-            for (int k = 0; k < 4; ++k) value += a.m[k * 4 + row] * b.m[column * 4 + k];
-            result.m[column * 4 + row] = value;
-        }
-    }
-    return result;
-}
-
-} // namespace gta4web::math
