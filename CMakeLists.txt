@@ -12,6 +12,10 @@ add_executable(gta4_web
     engine/renderer/camera.cpp
     engine/world/sector.cpp
     engine/world/streaming.cpp
+    engine/physics/collision.cpp
+    engine/physics/rigid_body.cpp
+    engine/physics/physics_world.cpp
+    engine/vehicles/vehicle.cpp
 )
 
 target_include_directories(gta4_web PRIVATE
