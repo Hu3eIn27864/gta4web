@@ -7,12 +7,16 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_executable(gta4_web
     src/app.cpp
+    engine/core/world.cpp
     engine/renderer/math.cpp
     engine/renderer/camera.cpp
+    engine/world/sector.cpp
+    engine/world/streaming.cpp
 )
 
 target_include_directories(gta4_web PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/renderer
 )
 
