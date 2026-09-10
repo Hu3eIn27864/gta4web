@@ -2,6 +2,7 @@
 #include "camera.hpp"
 #include "math.hpp"
 #include "core/fixed_timestep.hpp"
+#include "physics/collision.hpp"
 #include "vehicles/input.hpp"
 #include "vehicles/vehicle.hpp"
 
@@ -14,6 +15,9 @@
 
 namespace {
 using gta4web::math::Mat4;
+using gta4web::math::Vec3;
+using gta4web::physics::Aabb;
+using gta4web::physics::Contact;
 using gta4web::renderer::Camera;
 using gta4web::vehicles::Vehicle;
 using gta4web::vehicles::VehicleInputState;
@@ -70,6 +74,12 @@ Vehicle vehicle;
 VehicleInputState input;
 gta4web::core::FixedTimestep fixed_step;
 
+constexpr Vec3 vehicle_half_extents{1.05f, 0.50f, 2.00f};
+constexpr Aabb collision_blocks[] = {
+    {{5.0f, 0.0f, 7.0f}, {8.0f, 1.0f, 8.0f}},
+    {{-8.0f, 0.0f, -3.0f}, {-5.0f, 1.0f, 5.0f}},
+};
+
 enum KeyCode : int { KeyW = 87, KeyA = 65, KeyS = 83, KeyD = 68, KeySpace = 32 };
 
 EM_BOOL on_key(int event_type, const EmscriptenKeyboardEvent* event, void*) {
@@ -94,13 +104,79 @@ void resize_canvas() {
     }
 }
 
-void draw_cube(const Mat4& model, float r, float g, float b) {
-    const Mat4 mvp = gta4web::math::multiply(camera.projection(), model);
+Mat4 model_transform(Vec3 position, Vec3 scale, float yaw = 0.0f) {
+    return gta4web::math::multiply(
+        Mat4::translation(position),
+        gta4web::math::multiply(Mat4::rotation_y(yaw), Mat4::scale(scale)));
+}
+
+void draw_cube(Vec3 position, Vec3 scale, float r, float g, float b, float yaw = 0.0f) {
+    const Mat4 model = model_transform(position, scale, yaw);
+    const Mat4 mvp = gta4web::math::multiply(camera.view_projection(), model);
     glUniformMatrix4fv(mvp_uniform, 1, GL_FALSE, mvp.m);
     glUniform4f(color_uniform, r, g, b, 1.0f);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, cube_vertices);
     glEnableVertexAttribArray(0);
     glDrawArrays(GL_TRIANGLES, 0, 36);
+}
+
+void resolve_vehicle_collisions() {
+    auto& state = vehicle.state();
+    Aabb car_box = gta4web::physics::make_aabb(state.position, vehicle_half_extents);
+
+    const Contact ground = gta4web::physics::ground_contact(car_box, 0.0f);
+    if (ground.hit) {
+        state.position += ground.normal * ground.penetration;
+        if (state.velocity.y < 0.0f) state.velocity.y = 0.0f;
+    }
+
+    for (const Aabb& obstacle : collision_blocks) {
+        const Contact contact = gta4web::physics::intersect_aabb(car_box, obstacle);
+        if (!contact.hit) continue;
+        state.position += contact.normal * contact.penetration;
+        const float normal_speed = gta4web::math::dot(state.velocity, contact.normal);
+        if (normal_speed < 0.0f) state.velocity -= contact.normal * normal_speed;
+        car_box = gta4web::physics::make_aabb(state.position, vehicle_half_extents);
+    }
+}
+
+void update_camera() {
+    const auto& state = vehicle.state();
+    const Vec3 forward{std::sin(state.yaw), 0.0f, std::cos(state.yaw)};
+    const Vec3 target = state.position + Vec3{0.0f, 0.55f, 0.0f};
+    const Vec3 desired_position = target - forward * 7.5f + Vec3{0.0f, 3.1f, 0.0f};
+    camera.set_target(target);
+    camera.set_position(desired_position);
+}
+
+void draw_vehicle() {
+    const auto& state = vehicle.state();
+    const Vec3 p = state.position;
+    const float yaw = state.yaw;
+
+    // Original low-poly test vehicle: chassis, cabin, bumpers, lights and four wheels.
+    draw_cube(p + Vec3{0.0f, 0.45f, 0.0f}, {1.05f, 0.45f, 2.0f}, 0.72f, 0.10f, 0.07f, yaw);
+    draw_cube(p + Vec3{0.0f, 0.98f, -0.15f}, {0.78f, 0.40f, 0.95f}, 0.10f, 0.14f, 0.18f, yaw);
+    draw_cube(p + Vec3{0.0f, 0.35f, 2.03f}, {1.00f, 0.14f, 0.12f}, 0.08f, 0.08f, 0.08f, yaw);
+    draw_cube(p + Vec3{0.0f, 0.35f, -2.03f}, {1.00f, 0.14f, 0.12f}, 0.08f, 0.08f, 0.08f, yaw);
+
+    const Vec3 local_wheels[] = {
+        {-1.08f, 0.28f, 1.25f}, {1.08f, 0.28f, 1.25f},
+        {-1.08f, 0.28f, -1.25f}, {1.08f, 0.28f, -1.25f}
+    };
+    for (int i = 0; i < 4; ++i) {
+        const float c = std::cos(yaw), s = std::sin(yaw);
+        const Vec3 l = local_wheels[i];
+        const Vec3 world{p.x + l.x * c + l.z * s, p.y + l.y, p.z - l.x * s + l.z * c};
+        draw_cube(world, {0.22f, 0.22f, 0.42f}, 0.025f, 0.025f, 0.025f, yaw);
+    }
+
+    const Vec3 front_left{p.x - 0.58f * std::cos(yaw) + 1.95f * std::sin(yaw), p.y + 0.55f,
+                          p.z + 0.58f * std::sin(yaw) + 1.95f * std::cos(yaw)};
+    const Vec3 front_right{p.x + 0.58f * std::cos(yaw) + 1.95f * std::sin(yaw), p.y + 0.55f,
+                           p.z - 0.58f * std::sin(yaw) + 1.95f * std::cos(yaw)};
+    draw_cube(front_left, {0.18f, 0.12f, 0.10f}, 1.0f, 0.85f, 0.35f, yaw);
+    draw_cube(front_right, {0.18f, 0.12f, 0.10f}, 1.0f, 0.85f, 0.35f, yaw);
 }
 
 void render_frame() {
@@ -112,23 +188,21 @@ void render_frame() {
     resize_canvas();
     fixed_step.advance(frame_seconds, [](double step) {
         vehicle.update(input.sample(), static_cast<float>(step));
+        resolve_vehicle_collisions();
     });
-
-    const auto& state = vehicle.state();
-    const float view_z = -5.0f;
-    const float ground_z = state.position.z + view_z;
+    update_camera();
 
     glClearColor(0.025f, 0.035f, 0.055f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glUseProgram(program);
 
-    // A simple oversized floor marker keeps the prototype readable while driving.
-    draw_cube(Mat4::translation({state.position.x, -1.1f, ground_z}), 0.16f, 0.18f, 0.21f);
-
-    const Mat4 car = gta4web::math::multiply(
-        Mat4::translation({0.0f, 0.0f, view_z}),
-        Mat4::rotation_y(state.yaw));
-    draw_cube(car, 0.85f, 0.12f, 0.08f);
+    draw_cube({0.0f, -0.10f, 0.0f}, {45.0f, 0.10f, 45.0f}, 0.18f, 0.20f, 0.19f);
+    for (const Aabb& block : collision_blocks) {
+        const Vec3 center = (block.min + block.max) * 0.5f;
+        const Vec3 half = (block.max - block.min) * 0.5f;
+        draw_cube(center, half, 0.28f, 0.30f, 0.33f);
+    }
+    draw_vehicle();
 }
 
 } // namespace
@@ -141,10 +215,12 @@ bool App::initialize() {
     mvp_uniform = glGetUniformLocation(program, "u_mvp");
     color_uniform = glGetUniformLocation(program, "u_color");
     glEnable(GL_DEPTH_TEST);
-    vehicle.state().position = {0.0f, 0.0f, 0.0f};
+    vehicle.state().position = {0.0f, 0.5f, 0.0f};
+    vehicle.state().velocity = {};
     emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_TRUE, on_key);
     emscripten_set_keyup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_TRUE, on_key);
     resize_canvas();
+    update_camera();
     return true;
 }
 
