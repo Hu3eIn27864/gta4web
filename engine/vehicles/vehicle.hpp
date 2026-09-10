@@ -5,6 +5,7 @@
 namespace gta4web::vehicles {
 
 struct VehicleInput {
+    // Signed drivetrain request: +1 forward, -1 reverse, 0 neutral/coast.
     float throttle = 0.0f;
     float brake = 0.0f;
     float steering = 0.0f;
@@ -27,12 +28,15 @@ struct WheelState {
 struct VehicleConfig {
     float mass = 1400.0f;
     float engine_force = 8500.0f;
+    float reverse_force = 4200.0f;
     float brake_force = 12000.0f;
     float max_steer_angle = 0.65f;
     float wheel_radius = 0.34f;
     float wheelbase = 2.6f;
     float track_width = 1.6f;
     float max_speed = 65.0f;
+    float reverse_max_speed = 18.0f;
+    float direction_change_speed = 1.0f;
     float rolling_resistance = 1.5f;
     float lateral_grip = 7.0f;
     float suspension_rest_length = 0.35f;
@@ -57,6 +61,8 @@ struct VehicleState {
     float pitch_rate = 0.0f;
     float roll_rate = 0.0f;
     float speed = 0.0f;
+    int gear = 0; // -1 reverse, 0 neutral, +1 forward.
+    float drivetrain_speed = 0.0f;
     WheelState wheels[4]{};
 };
 
