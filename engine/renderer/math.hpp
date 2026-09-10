@@ -24,8 +24,15 @@ struct Vec3 {
 constexpr Vec3 operator*(float scalar, Vec3 value) { return value * scalar; }
 
 inline float dot(Vec3 a, Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+inline Vec3 cross(Vec3 a, Vec3 b) {
+    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+}
 inline float length_squared(Vec3 value) { return dot(value, value); }
 inline float length(Vec3 value) { return std::sqrt(length_squared(value)); }
+inline Vec3 normalize(Vec3 value) {
+    const float len = length(value);
+    return len > 0.00001f ? value / len : Vec3{};
+}
 
 struct Mat4 {
     float m[16]{};
@@ -34,6 +41,8 @@ struct Mat4 {
     static Mat4 perspective(float fov_y_radians, float aspect, float near_plane, float far_plane);
     static Mat4 translation(Vec3 value);
     static Mat4 rotation_y(float radians);
+    static Mat4 scale(Vec3 value);
+    static Mat4 look_at(Vec3 eye, Vec3 target, Vec3 up);
 };
 
 Mat4 multiply(const Mat4& a, const Mat4& b);
