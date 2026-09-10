@@ -1,168 +1,178 @@
 #include "vehicle.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace gta4web::vehicles {
 namespace {
 constexpr float kGravity = 9.81f;
-constexpr float kPi = 3.14159265359f;
-
-float clamp_unit(float value) { return std::clamp(value, -1.0f, 1.0f); }
-float sign_or_zero(float value) { return value > 0.0f ? 1.0f : (value < 0.0f ? -1.0f : 0.0f); }
+float clamp_unit(float v) { return std::clamp(v, -1.0f, 1.0f); }
+float safe_div(float a, float b) { return std::abs(b) > 0.0001f ? a / b : 0.0f; }
+float sign(float v) { return v > 0.0f ? 1.0f : (v < 0.0f ? -1.0f : 0.0f); }
 }
 
 Vehicle::Vehicle(VehicleConfig config) : config_(config) {
     config_.mass = std::max(config_.mass, 1.0f);
     config_.wheelbase = std::max(config_.wheelbase, 0.1f);
+    config_.track_width = std::max(config_.track_width, 0.1f);
     config_.wheel_radius = std::max(config_.wheel_radius, 0.05f);
     config_.suspension_rest_length = std::max(config_.suspension_rest_length, 0.05f);
-    config_.suspension_travel = std::max(config_.suspension_travel, 0.0f);
-    config_.suspension_stiffness = std::max(config_.suspension_stiffness, 1.0f);
-    config_.suspension_damping = std::max(config_.suspension_damping, 0.0f);
-    for (WheelState& wheel : state_.wheels) wheel.driven = true;
+    config_.suspension_travel = std::max(config_.suspension_travel, 0.01f);
+    for (WheelState& wheel : state_.wheels) {
+        wheel.driven = true;
+        wheel.grounded = false;
+        wheel.suspension_length = config_.suspension_rest_length;
+    }
 }
 
-void Vehicle::update(const VehicleInput& raw_input, float dt) {
+void Vehicle::update(const VehicleInput& raw, float dt) {
     if (dt <= 0.0f) return;
+    const float throttle = std::clamp(raw.throttle, 0.0f, 1.0f);
+    const float brake = std::clamp(raw.brake, 0.0f, 1.0f);
+    const float steering = clamp_unit(raw.steering);
+    const float handbrake = std::clamp(raw.handbrake, 0.0f, 1.0f);
 
-    const float throttle = std::clamp(raw_input.throttle, 0.0f, 1.0f);
-    const float brake = std::clamp(raw_input.brake, 0.0f, 1.0f);
-    const float steering = clamp_unit(raw_input.steering);
-    const float handbrake = std::clamp(raw_input.handbrake, 0.0f, 1.0f);
-
-    const float forward_x = std::sin(state_.yaw);
-    const float forward_z = std::cos(state_.yaw);
-    const float right_x = std::cos(state_.yaw);
-    const float right_z = -std::sin(state_.yaw);
-    const float forward_speed = state_.velocity.x * forward_x + state_.velocity.z * forward_z;
-    const float lateral_speed = state_.velocity.x * right_x + state_.velocity.z * right_z;
-
-    const float wheel_offsets[4][2] = {
-        { config_.wheelbase * 0.5f, -config_.track_width * 0.5f },
-        { config_.wheelbase * 0.5f,  config_.track_width * 0.5f },
-        {-config_.wheelbase * 0.5f, -config_.track_width * 0.5f },
-        {-config_.wheelbase * 0.5f,  config_.track_width * 0.5f }
+    const float cy = std::cos(state_.yaw), sy = std::sin(state_.yaw);
+    const math::Vec3 forward{sy, 0.0f, cy};
+    const math::Vec3 right{cy, 0.0f, -sy};
+    const float half_wb = config_.wheelbase * 0.5f;
+    const float half_track = config_.track_width * 0.5f;
+    const std::array<math::Vec3, 4> local = {
+        math::Vec3{-half_track, 0.0f, half_wb}, math::Vec3{half_track, 0.0f, half_wb},
+        math::Vec3{-half_track, 0.0f, -half_wb}, math::Vec3{half_track, 0.0f, -half_wb}
     };
 
-    const float max_suspension = config_.suspension_rest_length + config_.suspension_travel;
-    const float static_load = config_.mass * kGravity * 0.25f;
-    float total_longitudinal_force = 0.0f;
-    float total_lateral_force = 0.0f;
-    float yaw_torque = 0.0f;
+    const float cp = std::cos(state_.pitch), sp = std::sin(state_.pitch);
+    const float cr = std::cos(state_.roll), sr = std::sin(state_.roll);
+    auto rotate_body = [&](math::Vec3 p) {
+        math::Vec3 r{p.x, p.y * cr - p.z * sr, p.y * sr + p.z * cr};
+        return math::Vec3{r.x * cp + r.z * sp, r.y, -r.x * sp + r.z * cp};
+    };
 
+    std::array<float, 4> compression{};
+    std::array<float, 4> load{};
+    const float static_load = config_.mass * kGravity * 0.25f;
+    const float max_len = config_.suspension_rest_length + config_.suspension_travel;
+
+    // Four wheel colliders: each wheel casts a suspension ray to the ground plane.
     for (int i = 0; i < 4; ++i) {
         WheelState& wheel = state_.wheels[i];
-        const bool front = i < 2;
-        const float steer_angle = front ? steering * config_.max_steer_angle : 0.0f;
-        wheel.steer_angle = steer_angle;
-
-        const float local_x = wheel_offsets[i][0];
-        const float local_z = wheel_offsets[i][1];
-        const float wheel_world_x = state_.position.x + local_x * forward_x + local_z * right_x;
-        const float wheel_world_z = state_.position.z + local_x * forward_z + local_z * right_z;
-        (void)wheel_world_x;
-        (void)wheel_world_z;
-
-        // Raycast against the flat prototype ground. The suspension is a spring-damper
-        // rather than a hard chassis constraint, so body height and load change smoothly.
-        const float wheel_center_y = state_.position.y + 0.20f;
-        const float ray_length = max_suspension + config_.wheel_radius;
-        const float ground_distance = wheel_center_y - config_.wheel_radius;
-        const float target_length = std::clamp(ground_distance, 0.0f, max_suspension);
-        wheel.grounded = ground_distance <= ray_length;
-        wheel.suspension_velocity = (wheel.suspension_length - target_length) / dt;
-        wheel.suspension_length = target_length;
-
-        if (!wheel.grounded) {
-            wheel.normal_load = 0.0f;
-            continue;
-        }
-
-        const float compression = std::max(0.0f, config_.suspension_rest_length - wheel.suspension_length);
-        const float spring_force = compression * config_.suspension_stiffness;
-        const float damper_force = wheel.suspension_velocity * config_.suspension_damping;
-        wheel.normal_load = std::max(0.0f, static_load + spring_force + damper_force);
-
-        const float wheel_forward_x = front ? std::sin(state_.yaw + steer_angle) : forward_x;
-        const float wheel_forward_z = front ? std::cos(state_.yaw + steer_angle) : forward_z;
-        const float wheel_right_x = std::cos(state_.yaw + steer_angle);
-        const float wheel_right_z = -std::sin(state_.yaw + steer_angle);
-
-        const float local_forward_speed = state_.velocity.x * wheel_forward_x + state_.velocity.z * wheel_forward_z;
-        const float local_lateral_speed = state_.velocity.x * wheel_right_x + state_.velocity.z * wheel_right_z;
-        const float wheel_angular_speed = wheel.angular_speed;
-        const float wheel_surface_speed = wheel_angular_speed * config_.wheel_radius;
-
-        wheel.slip_ratio = (std::abs(local_forward_speed) > 0.5f)
-            ? (wheel_surface_speed - local_forward_speed) / std::max(std::abs(local_forward_speed), 0.5f)
+        const math::Vec3 offset = rotate_body(local[i]);
+        const math::Vec3 wheel_position = state_.position + right * offset.x + forward * offset.z + math::Vec3{0.0f, offset.y, 0.0f};
+        wheel.contact_position = wheel_position;
+        const float distance = wheel_position.y - config_.wheel_radius;
+        const float target = std::clamp(distance, 0.0f, max_len);
+        wheel.suspension_velocity = safe_div(target - wheel.suspension_length, dt);
+        wheel.suspension_length = target;
+        wheel.grounded = distance <= max_len;
+        compression[i] = std::max(0.0f, config_.suspension_rest_length - target);
+        load[i] = wheel.grounded
+            ? std::max(0.0f, static_load + compression[i] * config_.suspension_stiffness - wheel.suspension_velocity * config_.suspension_damping)
             : 0.0f;
-        wheel.slip_angle = std::atan2(local_lateral_speed, std::max(std::abs(local_forward_speed), 0.5f));
-
-        float drive_force = wheel.driven ? throttle * config_.engine_force * 0.25f : 0.0f;
-        const float brake_force = brake * config_.brake_force * 0.25f;
-        drive_force -= sign_or_zero(local_forward_speed) * brake_force;
-        drive_force -= local_forward_speed * config_.drivetrain_drag * 0.25f;
-
-        const float max_tire_force = wheel.normal_load * config_.tire_longitudinal_grip;
-        const float longitudinal_force = std::clamp(drive_force, -max_tire_force, max_tire_force);
-        const float grip = config_.tire_lateral_grip * (1.0f - (front ? 0.0f : 0.25f) - 0.7f * handbrake);
-        const float lateral_force = std::clamp(-local_lateral_speed * grip * config_.mass * 0.25f,
-                                               -wheel.normal_load * config_.tire_lateral_grip,
-                                               wheel.normal_load * config_.tire_lateral_grip);
-
-        total_longitudinal_force += longitudinal_force * wheel_forward_x + lateral_force * wheel_right_x;
-        total_lateral_force += longitudinal_force * wheel_forward_z + lateral_force * wheel_right_z;
-
-        const float force_x = longitudinal_force * wheel_forward_x + lateral_force * wheel_right_x;
-        const float force_z = longitudinal_force * wheel_forward_z + lateral_force * wheel_right_z;
-        yaw_torque += local_x * force_z - local_z * force_x;
-
-        const float inertia_blend = std::clamp(12.0f * dt, 0.0f, 1.0f);
-        const float target_wheel_speed = local_forward_speed / config_.wheel_radius;
-        wheel.angular_speed += (target_wheel_speed - wheel.angular_speed) * inertia_blend;
     }
 
-    const float acceleration_x = total_longitudinal_force / config_.mass;
-    const float acceleration_z = total_lateral_force / config_.mass;
-    state_.velocity.x += acceleration_x * dt;
-    state_.velocity.z += acceleration_z * dt;
-
-    // Aerodynamic/rolling drag keeps the car from retaining speed forever.
-    const float drag = 0.15f * state_.speed * state_.speed + config_.rolling_resistance * state_.speed;
-    if (state_.speed > 0.01f) {
-        const float drag_accel = drag / config_.mass;
-        state_.velocity.x -= state_.velocity.x / state_.speed * drag_accel * dt;
-        state_.velocity.z -= state_.velocity.z / state_.speed * drag_accel * dt;
+    // Anti-roll bars transfer load across each axle when left/right compression differs.
+    for (int axle = 0; axle < 2; ++axle) {
+        const int l = axle * 2, r = l + 1;
+        const float k = axle == 0 ? config_.anti_roll_front : config_.anti_roll_rear;
+        const float transfer = (compression[l] - compression[r]) * k;
+        load[l] = std::max(0.0f, load[l] - transfer);
+        load[r] = std::max(0.0f, load[r] + transfer);
     }
 
-    const float speed = std::sqrt(state_.velocity.x * state_.velocity.x + state_.velocity.z * state_.velocity.z);
-    if (speed > config_.max_speed) {
-        const float scale = config_.max_speed / speed;
+    // Longitudinal load transfer feeds the chassis pitch response.
+    const float forward_speed = math::dot(state_.velocity, forward);
+    const float drive_accel = throttle * config_.engine_force / config_.mass;
+    const float brake_accel = brake * config_.brake_force / config_.mass * sign(forward_speed);
+    const float transfer = (drive_accel - brake_accel) * config_.mass * 0.42f / config_.wheelbase;
+    for (int i = 0; i < 2; ++i) load[i] = std::max(0.0f, load[i] - transfer * 0.5f);
+    for (int i = 2; i < 4; ++i) load[i] = std::max(0.0f, load[i] + transfer * 0.5f);
+
+    math::Vec3 total_force{};
+    float yaw_torque = 0.0f;
+    const float axle_drive[2] = {throttle * config_.engine_force * 0.5f, throttle * config_.engine_force * 0.5f};
+    const float brake_force = brake * config_.brake_force;
+    const float lock = std::clamp(config_.differential_lock, 0.0f, 1.0f);
+
+    for (int axle = 0; axle < 2; ++axle) {
+        const int l = axle * 2, r = l + 1;
+        const float ll = std::max(load[l], 1.0f), rl = std::max(load[r], 1.0f);
+        const float sum = ll + rl;
+        const float base_l = axle_drive[axle] * ll / sum;
+        const float base_r = axle_drive[axle] * rl / sum;
+        const float avg = axle_drive[axle] * 0.5f;
+        const float drive[2] = {base_l * (1.0f - lock) + avg * lock, base_r * (1.0f - lock) + avg * lock};
+
+        for (int side = 0; side < 2; ++side) {
+            const int i = axle * 2 + side;
+            WheelState& wheel = state_.wheels[i];
+            if (!wheel.grounded) continue;
+            const float steer_angle = axle == 0 ? steering * config_.max_steer_angle : 0.0f;
+            wheel.steer_angle = steer_angle;
+            const float wa = state_.yaw + steer_angle;
+            const math::Vec3 wf{std::sin(wa), 0.0f, std::cos(wa)};
+            const math::Vec3 wr{std::cos(wa), 0.0f, -std::sin(wa)};
+            const math::Vec3 rpos = right * local[i].x + forward * local[i].z;
+            const math::Vec3 point_velocity = state_.velocity + math::Vec3{-state_.yaw_rate * rpos.z, 0.0f, state_.yaw_rate * rpos.x};
+            const float vlong = math::dot(point_velocity, wf);
+            const float vlat = math::dot(point_velocity, wr);
+            const float surface_speed = wheel.angular_speed * config_.wheel_radius;
+            wheel.slip_ratio = (surface_speed - vlong) / std::max(std::abs(vlong), 2.0f);
+            wheel.slip_angle = std::atan2(vlat, std::abs(vlong) + 0.5f);
+
+            float fx = drive[side] - brake_force * 0.25f * sign(vlong);
+            if (axle == 1) fx -= handbrake * brake_force * 0.20f * sign(vlong);
+            const float normal = std::max(load[i], 50.0f);
+            fx = std::clamp(fx, -normal * config_.tire_longitudinal_grip, normal * config_.tire_longitudinal_grip);
+            const float rear_grip = axle == 1 ? (1.0f - 0.65f * handbrake) : 1.0f;
+            const float fy = std::clamp(-vlat * config_.lateral_grip * config_.mass * 0.25f,
+                -normal * config_.tire_lateral_grip * rear_grip, normal * config_.tire_lateral_grip * rear_grip);
+            const math::Vec3 force = wf * fx + wr * fy;
+            total_force += force;
+            yaw_torque += rpos.x * force.z - rpos.z * force.x;
+
+            const float inertia = 1.4f * config_.wheel_radius * config_.wheel_radius;
+            const float wheel_torque = drive[side] * config_.wheel_radius - fx * config_.wheel_radius - wheel.angular_speed * config_.drivetrain_drag;
+            wheel.angular_speed += safe_div(wheel_torque, inertia) * dt;
+        }
+    }
+
+    const float planar_speed = std::sqrt(state_.velocity.x * state_.velocity.x + state_.velocity.z * state_.velocity.z);
+    total_force -= state_.velocity * (config_.rolling_resistance + 0.04f * planar_speed);
+    state_.velocity += (total_force / config_.mass) * dt;
+    state_.speed = std::sqrt(state_.velocity.x * state_.velocity.x + state_.velocity.z * state_.velocity.z);
+    if (state_.speed > config_.max_speed) {
+        const float scale = config_.max_speed / state_.speed;
         state_.velocity.x *= scale;
         state_.velocity.z *= scale;
+        state_.speed = config_.max_speed;
     }
-    state_.speed = std::sqrt(state_.velocity.x * state_.velocity.x + state_.velocity.z * state_.velocity.z);
 
-    const float yaw_inertia = config_.mass * config_.wheelbase * config_.wheelbase * 0.12f;
-    const float yaw_accel = yaw_torque / std::max(yaw_inertia, 1.0f);
-    state_.yaw_rate += yaw_accel * dt;
-    state_.yaw_rate *= std::max(0.0f, 1.0f - 1.8f * dt);
+    const float yaw_inertia = config_.mass * (config_.wheelbase * config_.wheelbase + config_.track_width * config_.track_width) / 12.0f;
+    state_.yaw_rate += yaw_torque / std::max(yaw_inertia, 1.0f) * dt;
+    state_.yaw_rate *= std::max(0.0f, 1.0f - 1.6f * dt);
     state_.yaw += state_.yaw_rate * dt;
+    state_.position += state_.velocity * dt;
 
-    state_.position.x += state_.velocity.x * dt;
-    state_.position.z += state_.velocity.z * dt;
+    // Pitch/roll are real state variables driven by front/rear and left/right wheel loads.
+    const float front_load = load[0] + load[1], rear_load = load[2] + load[3];
+    const float left_load = load[0] + load[2], right_load = load[1] + load[3];
+    const float target_pitch = std::clamp((rear_load - front_load) / (config_.mass * kGravity) * 0.28f, -0.30f, 0.30f);
+    const float target_roll = std::clamp((right_load - left_load) / (config_.mass * kGravity) * 0.35f, -0.35f, 0.35f);
+    state_.pitch_rate += (target_pitch - state_.pitch) * 18.0f * dt;
+    state_.roll_rate += (target_roll - state_.roll) * 22.0f * dt;
+    state_.pitch_rate *= std::max(0.0f, 1.0f - 5.0f * dt);
+    state_.roll_rate *= std::max(0.0f, 1.0f - 5.0f * dt);
+    state_.pitch += state_.pitch_rate * dt;
+    state_.roll += state_.roll_rate * dt;
+    state_.pitch = std::clamp(state_.pitch, -0.35f, 0.35f);
+    state_.roll = std::clamp(state_.roll, -0.35f, 0.35f);
 
-    // Keep the chassis above the ground plane using the wheel/suspension envelope.
-    float average_length = 0.0f;
-    int grounded_wheels = 0;
-    for (const WheelState& wheel : state_.wheels) {
-        if (wheel.grounded) { average_length += wheel.suspension_length; ++grounded_wheels; }
-    }
-    if (grounded_wheels > 0) {
-        average_length /= static_cast<float>(grounded_wheels);
-        state_.position.y = 0.20f + config_.wheel_radius + (average_length - config_.suspension_rest_length) * 0.35f;
-        if (state_.position.y < 0.0f) state_.position.y = 0.0f;
+    for (int i = 0; i < 4; ++i) {
+        state_.wheels[i].normal_load = load[i];
+        state_.wheels[i].suspension_length = std::clamp(state_.wheels[i].suspension_length,
+            config_.suspension_rest_length - config_.suspension_travel, max_len);
     }
 }
 
