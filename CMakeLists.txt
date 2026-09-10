@@ -5,25 +5,32 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-add_executable(gta4_web src/app.cpp)
-target_include_directories(gta4_web PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_compile_options(gta4_web PRIVATE -Wall -Wextra -Wpedantic)
+add_executable(gta4_web
+    src/app.cpp
+    engine/renderer/math.cpp
+    engine/renderer/camera.cpp
+)
 
-if(NOT EMSCRIPTEN)
-  message(FATAL_ERROR "This initial project targets Emscripten. Configure with: emcmake cmake -S . -B build")
+target_include_directories(gta4_web PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/renderer
+)
+
+if(EMSCRIPTEN)
+    set_target_properties(gta4_web PROPERTIES
+        OUTPUT_NAME "gta4_web"
+        SUFFIX ".html"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/web")
+
+    target_link_options(gta4_web PRIVATE
+        "-sMIN_WEBGL_VERSION=2"
+        "-sMAX_WEBGL_VERSION=2"
+        "-sALLOW_MEMORY_GROWTH=1"
+        "-sNO_EXIT_RUNTIME=1"
+        "-sASSERTIONS=1"
+        "--shell-file=${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html")
+
+    target_compile_options(gta4_web PRIVATE -Wall -Wextra -Wpedantic)
+else()
+    message(FATAL_ERROR "This initial project is intended for the Emscripten/WebAssembly build. Run: emcmake cmake -S . -B build")
 endif()
-
-set_target_properties(gta4_web PROPERTIES
-  OUTPUT_NAME "gta4_web"
-  SUFFIX ".html"
-  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/web"
-)
-
-target_link_options(gta4_web PRIVATE
-  "-sMIN_WEBGL_VERSION=2"
-  "-sMAX_WEBGL_VERSION=2"
-  "-sALLOW_MEMORY_GROWTH=1"
-  "-sNO_EXIT_RUNTIME=1"
-  "-sASSERTIONS=1"
-  "--shell-file=${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html"
-)
