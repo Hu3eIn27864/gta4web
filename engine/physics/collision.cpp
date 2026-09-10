@@ -5,7 +5,10 @@
 namespace gta4web::physics {
 
 Aabb make_aabb(math::Vec3 center, math::Vec3 half_extents) {
-    return {center - half_extents, center + half_extents};
+    return {
+        {center.x - half_extents.x, center.y - half_extents.y, center.z - half_extents.z},
+        {center.x + half_extents.x, center.y + half_extents.y, center.z + half_extents.z}
+    };
 }
 
 Contact intersect_aabb(const Aabb& a, const Aabb& b) {
@@ -18,16 +21,20 @@ Contact intersect_aabb(const Aabb& a, const Aabb& b) {
     }
 
     Contact contact{true, {}, overlap_x};
+    const math::Vec3 delta{
+        (a.min.x + a.max.x) - (b.min.x + b.max.x),
+        (a.min.y + a.max.y) - (b.min.y + b.max.y),
+        (a.min.z + a.max.z) - (b.min.z + b.max.z)
+    };
+
+    contact.normal = {delta.x < 0.0f ? -1.0f : 1.0f, 0.0f, 0.0f};
     if (overlap_y < contact.penetration) {
         contact.penetration = overlap_y;
-        contact.normal = {0.0f, a.max.y + a.min.y < b.max.y + b.min.y ? -1.0f : 1.0f, 0.0f};
-    } else {
-        contact.normal = {a.max.x + a.min.x < b.max.x + b.min.x ? -1.0f : 1.0f, 0.0f, 0.0f};
+        contact.normal = {0.0f, delta.y < 0.0f ? -1.0f : 1.0f, 0.0f};
     }
-
     if (overlap_z < contact.penetration) {
         contact.penetration = overlap_z;
-        contact.normal = {0.0f, 0.0f, a.max.z + a.min.z < b.max.z + b.min.z ? -1.0f : 1.0f};
+        contact.normal = {0.0f, 0.0f, delta.z < 0.0f ? -1.0f : 1.0f};
     }
     return contact;
 }
