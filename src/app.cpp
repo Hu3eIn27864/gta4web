@@ -128,6 +128,7 @@ void resolve_vehicle_collisions() {
     if (ground.hit) {
         state.position += ground.normal * ground.penetration;
         if (state.velocity.y < 0.0f) state.velocity.y = 0.0f;
+        car_box = gta4web::physics::make_aabb(state.position, vehicle_half_extents);
     }
 
     for (const Aabb& obstacle : collision_blocks) {
