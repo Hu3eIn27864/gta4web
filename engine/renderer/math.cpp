@@ -16,7 +16,6 @@ Mat4 Mat4::identity() {
 Mat4 Mat4::perspective(float fov_y_radians, float aspect, float near_plane, float far_plane) {
     const float safe_aspect = std::max(aspect, 0.001f);
     const float f = 1.0f / std::tan(fov_y_radians * 0.5f);
-
     Mat4 result{};
     result.m[0] = f / safe_aspect;
     result.m[5] = f;
@@ -37,7 +36,6 @@ Mat4 Mat4::translation(Vec3 value) {
 Mat4 Mat4::rotation_y(float radians) {
     const float c = std::cos(radians);
     const float s = std::sin(radians);
-
     Mat4 result = identity();
     result.m[0] = c;
     result.m[2] = -s;
@@ -46,14 +44,36 @@ Mat4 Mat4::rotation_y(float radians) {
     return result;
 }
 
+Mat4 Mat4::scale(Vec3 value) {
+    Mat4 result{};
+    result.m[0] = value.x;
+    result.m[5] = value.y;
+    result.m[10] = value.z;
+    result.m[15] = 1.0f;
+    return result;
+}
+
+Mat4 Mat4::look_at(Vec3 eye, Vec3 target, Vec3 up) {
+    const Vec3 forward = normalize(target - eye);
+    const Vec3 right = normalize(cross(forward, up));
+    const Vec3 corrected_up = cross(right, forward);
+
+    Mat4 result = identity();
+    result.m[0] = right.x; result.m[4] = right.y; result.m[8] = right.z;
+    result.m[1] = corrected_up.x; result.m[5] = corrected_up.y; result.m[9] = corrected_up.z;
+    result.m[2] = -forward.x; result.m[6] = -forward.y; result.m[10] = -forward.z;
+    result.m[12] = -dot(right, eye);
+    result.m[13] = -dot(corrected_up, eye);
+    result.m[14] = dot(forward, eye);
+    return result;
+}
+
 Mat4 multiply(const Mat4& a, const Mat4& b) {
     Mat4 result{};
     for (int column = 0; column < 4; ++column) {
         for (int row = 0; row < 4; ++row) {
             float value = 0.0f;
-            for (int k = 0; k < 4; ++k) {
-                value += a.m[k * 4 + row] * b.m[column * 4 + k];
-            }
+            for (int k = 0; k < 4; ++k) value += a.m[k * 4 + row] * b.m[column * 4 + k];
             result.m[column * 4 + row] = value;
         }
     }
