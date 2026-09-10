@@ -123,14 +123,12 @@ void draw_cube(Vec3 position, Vec3 scale, float r, float g, float b, float yaw =
 void resolve_vehicle_collisions() {
     auto& state = vehicle.state();
     Aabb car_box = gta4web::physics::make_aabb(state.position, vehicle_half_extents);
-
     const Contact ground = gta4web::physics::ground_contact(car_box, 0.0f);
     if (ground.hit) {
         state.position += ground.normal * ground.penetration;
         if (state.velocity.y < 0.0f) state.velocity.y = 0.0f;
         car_box = gta4web::physics::make_aabb(state.position, vehicle_half_extents);
     }
-
     for (const Aabb& obstacle : collision_blocks) {
         const Contact contact = gta4web::physics::intersect_aabb(car_box, obstacle);
         if (!contact.hit) continue;
@@ -144,10 +142,16 @@ void resolve_vehicle_collisions() {
 void update_camera() {
     const auto& state = vehicle.state();
     const Vec3 forward{std::sin(state.yaw), 0.0f, std::cos(state.yaw)};
-    const Vec3 target = state.position + Vec3{0.0f, 0.55f, 0.0f};
-    const Vec3 desired_position = target - forward * 7.5f + Vec3{0.0f, 3.1f, 0.0f};
+    const Vec3 target = state.position + Vec3{0.0f, 0.65f, 0.0f};
+    const Vec3 desired_position = target - forward * 8.0f + Vec3{0.0f, 3.4f, 0.0f};
     camera.set_target(target);
     camera.set_position(desired_position);
+}
+
+Vec3 local_to_world(const Vec3& p, Vec3 local, float yaw) {
+    const float c = std::cos(yaw);
+    const float s = std::sin(yaw);
+    return {p.x + local.x * c + local.z * s, p.y + local.y, p.z - local.x * s + local.z * c};
 }
 
 void draw_vehicle() {
@@ -155,29 +159,38 @@ void draw_vehicle() {
     const Vec3 p = state.position;
     const float yaw = state.yaw;
 
-    // Original low-poly test vehicle: chassis, cabin, bumpers, lights and four wheels.
-    draw_cube(p + Vec3{0.0f, 0.45f, 0.0f}, {1.05f, 0.45f, 2.0f}, 0.72f, 0.10f, 0.07f, yaw);
-    draw_cube(p + Vec3{0.0f, 0.98f, -0.15f}, {0.78f, 0.40f, 0.95f}, 0.10f, 0.14f, 0.18f, yaw);
-    draw_cube(p + Vec3{0.0f, 0.35f, 2.03f}, {1.00f, 0.14f, 0.12f}, 0.08f, 0.08f, 0.08f, yaw);
-    draw_cube(p + Vec3{0.0f, 0.35f, -2.03f}, {1.00f, 0.14f, 0.12f}, 0.08f, 0.08f, 0.08f, yaw);
+    // Layered low-poly body: lower chassis, hood, cabin, roof and bumpers.
+    draw_cube(p + Vec3{0.0f, 0.48f, 0.0f}, {1.06f, 0.38f, 2.02f}, 0.62f, 0.08f, 0.055f, yaw);
+    draw_cube(p + Vec3{0.0f, 0.78f, 0.85f}, {0.92f, 0.25f, 0.88f}, 0.68f, 0.10f, 0.07f, yaw);
+    draw_cube(p + Vec3{0.0f, 1.08f, -0.20f}, {0.76f, 0.36f, 0.92f}, 0.08f, 0.12f, 0.17f, yaw);
+    draw_cube(p + Vec3{0.0f, 1.43f, -0.20f}, {0.68f, 0.06f, 0.78f}, 0.055f, 0.065f, 0.08f, yaw);
+    draw_cube(p + Vec3{0.0f, 0.34f, 2.04f}, {1.00f, 0.13f, 0.13f}, 0.06f, 0.06f, 0.06f, yaw);
+    draw_cube(p + Vec3{0.0f, 0.34f, -2.04f}, {1.00f, 0.13f, 0.13f}, 0.06f, 0.06f, 0.06f, yaw);
 
-    const Vec3 local_wheels[] = {
+    const Vec3 wheel_local[] = {
         {-1.08f, 0.28f, 1.25f}, {1.08f, 0.28f, 1.25f},
         {-1.08f, 0.28f, -1.25f}, {1.08f, 0.28f, -1.25f}
     };
     for (int i = 0; i < 4; ++i) {
-        const float c = std::cos(yaw), s = std::sin(yaw);
-        const Vec3 l = local_wheels[i];
-        const Vec3 world{p.x + l.x * c + l.z * s, p.y + l.y, p.z - l.x * s + l.z * c};
-        draw_cube(world, {0.22f, 0.22f, 0.42f}, 0.025f, 0.025f, 0.025f, yaw);
+        const auto& wheel = state.wheels[i];
+        const float suspension_drop = config_.suspension_rest_length - wheel.suspension_length;
+        Vec3 local = wheel_local[i];
+        local.y -= std::max(0.0f, suspension_drop) * 0.45f;
+        const Vec3 world = local_to_world(p, local, yaw);
+        const float wheel_yaw = yaw + wheel.steer_angle;
+        // Tire, hub and a small sidewall/hub primitive make the wheel readable at distance.
+        draw_cube(world, {0.22f, 0.36f, 0.43f}, 0.018f, 0.018f, 0.02f, wheel_yaw);
+        draw_cube(world + Vec3{0.0f, 0.0f, 0.01f}, {0.10f, 0.22f, 0.20f}, 0.16f, 0.17f, 0.18f, wheel_yaw);
     }
 
-    const Vec3 front_left{p.x - 0.58f * std::cos(yaw) + 1.95f * std::sin(yaw), p.y + 0.55f,
-                          p.z + 0.58f * std::sin(yaw) + 1.95f * std::cos(yaw)};
-    const Vec3 front_right{p.x + 0.58f * std::cos(yaw) + 1.95f * std::sin(yaw), p.y + 0.55f,
-                           p.z - 0.58f * std::sin(yaw) + 1.95f * std::cos(yaw)};
-    draw_cube(front_left, {0.18f, 0.12f, 0.10f}, 1.0f, 0.85f, 0.35f, yaw);
-    draw_cube(front_right, {0.18f, 0.12f, 0.10f}, 1.0f, 0.85f, 0.35f, yaw);
+    const Vec3 head_l = local_to_world(p, {-0.58f, 0.56f, 1.94f}, yaw);
+    const Vec3 head_r = local_to_world(p, {0.58f, 0.56f, 1.94f}, yaw);
+    const Vec3 tail_l = local_to_world(p, {-0.62f, 0.52f, -1.94f}, yaw);
+    const Vec3 tail_r = local_to_world(p, {0.62f, 0.52f, -1.94f}, yaw);
+    draw_cube(head_l, {0.20f, 0.11f, 0.09f}, 0.95f, 0.82f, 0.35f, yaw);
+    draw_cube(head_r, {0.20f, 0.11f, 0.09f}, 0.95f, 0.82f, 0.35f, yaw);
+    draw_cube(tail_l, {0.20f, 0.10f, 0.08f}, 0.65f, 0.025f, 0.02f, yaw);
+    draw_cube(tail_r, {0.20f, 0.10f, 0.08f}, 0.65f, 0.025f, 0.02f, yaw);
 }
 
 void render_frame() {
