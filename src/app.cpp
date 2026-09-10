@@ -156,6 +156,7 @@ Vec3 local_to_world(const Vec3& p, Vec3 local, float yaw) {
 
 void draw_vehicle() {
     const auto& state = vehicle.state();
+    const auto& config = vehicle.config();
     const Vec3 p = state.position;
     const float yaw = state.yaw;
 
@@ -173,12 +174,11 @@ void draw_vehicle() {
     };
     for (int i = 0; i < 4; ++i) {
         const auto& wheel = state.wheels[i];
-        const float suspension_drop = config_.suspension_rest_length - wheel.suspension_length;
+        const float suspension_drop = config.suspension_rest_length - wheel.suspension_length;
         Vec3 local = wheel_local[i];
         local.y -= std::max(0.0f, suspension_drop) * 0.45f;
         const Vec3 world = local_to_world(p, local, yaw);
         const float wheel_yaw = yaw + wheel.steer_angle;
-        // Tire, hub and a small sidewall/hub primitive make the wheel readable at distance.
         draw_cube(world, {0.22f, 0.36f, 0.43f}, 0.018f, 0.018f, 0.02f, wheel_yaw);
         draw_cube(world + Vec3{0.0f, 0.0f, 0.01f}, {0.10f, 0.22f, 0.20f}, 0.16f, 0.17f, 0.18f, wheel_yaw);
     }
