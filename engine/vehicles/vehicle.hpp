@@ -21,6 +21,7 @@ struct WheelState {
     float normal_load = 0.0f;
     float slip_ratio = 0.0f;
     float slip_angle = 0.0f;
+    math::Vec3 contact_position{};
 };
 
 struct VehicleConfig {
@@ -38,16 +39,23 @@ struct VehicleConfig {
     float suspension_travel = 0.18f;
     float suspension_stiffness = 28000.0f;
     float suspension_damping = 4200.0f;
+    float anti_roll_front = 7200.0f;
+    float anti_roll_rear = 5200.0f;
     float tire_longitudinal_grip = 1.15f;
     float tire_lateral_grip = 1.45f;
     float drivetrain_drag = 0.8f;
+    float differential_lock = 0.18f;
 };
 
 struct VehicleState {
     math::Vec3 position{};
     math::Vec3 velocity{};
     float yaw = 0.0f;
+    float pitch = 0.0f;
+    float roll = 0.0f;
     float yaw_rate = 0.0f;
+    float pitch_rate = 0.0f;
+    float roll_rate = 0.0f;
     float speed = 0.0f;
     WheelState wheels[4]{};
 };
