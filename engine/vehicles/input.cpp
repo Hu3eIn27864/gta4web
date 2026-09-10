@@ -21,8 +21,10 @@ void VehicleInputState::press_handbrake(bool pressed) { handbrake_key_ = pressed
 
 VehicleInput VehicleInputState::sample() const {
     VehicleInput result;
-    result.throttle = std::max(throttle_axis_, forward_ ? 1.0f : 0.0f);
-    result.brake = std::max(brake_axis_, (brake_key_ || reverse_) ? 1.0f : 0.0f);
+    result.throttle = throttle_axis_;
+    if (forward_ && !reverse_) result.throttle = 1.0f;
+    if (reverse_ && !forward_) result.throttle = -1.0f;
+    result.brake = std::max(brake_axis_, brake_key_ ? 1.0f : 0.0f);
     result.steering = steering_axis_;
     if (left_) result.steering -= 1.0f;
     if (right_) result.steering += 1.0f;
