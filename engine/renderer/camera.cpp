@@ -13,4 +13,12 @@ math::Mat4 Camera::projection() const {
     return math::Mat4::perspective(fov_y_radians_, aspect_, near_plane_, far_plane_);
 }
 
+math::Mat4 Camera::view() const {
+    return math::Mat4::look_at(position_, target_, up_);
+}
+
+math::Mat4 Camera::view_projection() const {
+    return math::multiply(projection(), view());
+}
+
 } // namespace gta4web::renderer
