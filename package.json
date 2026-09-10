@@ -1,0 +1,9 @@
+{
+  "name": "gta4-web",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Clean-room WebAssembly/WebGL open-world engine prototype",
+  "scripts": {
+    "build:web": "bash scripts/build-web.sh"
+  }
+}
