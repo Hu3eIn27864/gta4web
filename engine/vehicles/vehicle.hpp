@@ -13,9 +13,14 @@ struct VehicleInput {
 
 struct WheelState {
     bool driven = false;
-    bool grounded = true;
+    bool grounded = false;
     float steer_angle = 0.0f;
     float angular_speed = 0.0f;
+    float suspension_length = 0.35f;
+    float suspension_velocity = 0.0f;
+    float normal_load = 0.0f;
+    float slip_ratio = 0.0f;
+    float slip_angle = 0.0f;
 };
 
 struct VehicleConfig {
@@ -29,6 +34,13 @@ struct VehicleConfig {
     float max_speed = 65.0f;
     float rolling_resistance = 1.5f;
     float lateral_grip = 7.0f;
+    float suspension_rest_length = 0.35f;
+    float suspension_travel = 0.18f;
+    float suspension_stiffness = 28000.0f;
+    float suspension_damping = 4200.0f;
+    float tire_longitudinal_grip = 1.15f;
+    float tire_lateral_grip = 1.45f;
+    float drivetrain_drag = 0.8f;
 };
 
 struct VehicleState {
@@ -43,13 +55,10 @@ struct VehicleState {
 class Vehicle {
 public:
     explicit Vehicle(VehicleConfig config = {});
-
     void update(const VehicleInput& input, float dt);
-
     const VehicleConfig& config() const { return config_; }
     const VehicleState& state() const { return state_; }
     VehicleState& state() { return state_; }
-
 private:
     VehicleConfig config_;
     VehicleState state_;
