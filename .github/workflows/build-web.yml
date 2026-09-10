@@ -1,0 +1,35 @@
+name: Build WebAssembly
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+          actions-cache-folder: emsdk-cache
+
+      - name: Verify toolchain
+        run: |
+          emcc --version
+          emcmake --version
+          cmake --version
+
+      - name: Configure
+        run: emcmake cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Upload web build
+        uses: actions/upload-artifact@v4
+        with:
+          name: gta4-web
+          path: build/web/
