@@ -1,7 +1,6 @@
 #pragma once
 
 #include "../renderer/math.hpp"
-
 #include <cstdint>
 
 namespace gta4web::world {
@@ -19,7 +18,7 @@ class SectorGrid {
 public:
     explicit SectorGrid(float sector_size = 128.0f) : sector_size_(sector_size) {}
 
-    SectorCoord locate(const renderer::math::Vec3& position) const;
+    SectorCoord locate(const math::Vec3& position) const;
     float sector_size() const { return sector_size_; }
 
 private:
