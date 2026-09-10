@@ -19,6 +19,9 @@ Vehicle::Vehicle(VehicleConfig config) : config_(config) {
     config_.wheel_radius = std::max(config_.wheel_radius, 0.05f);
     config_.suspension_rest_length = std::max(config_.suspension_rest_length, 0.05f);
     config_.suspension_travel = std::max(config_.suspension_travel, 0.01f);
+    config_.reverse_force = std::max(config_.reverse_force, 0.0f);
+    config_.reverse_max_speed = std::max(config_.reverse_max_speed, 1.0f);
+    config_.direction_change_speed = std::max(config_.direction_change_speed, 0.05f);
     for (WheelState& wheel : state_.wheels) {
         wheel.driven = true;
         wheel.grounded = false;
@@ -28,8 +31,7 @@ Vehicle::Vehicle(VehicleConfig config) : config_(config) {
 
 void Vehicle::update(const VehicleInput& raw, float dt) {
     if (dt <= 0.0f) return;
-    const float throttle = std::clamp(raw.throttle, 0.0f, 1.0f);
-    const float brake = std::clamp(raw.brake, 0.0f, 1.0f);
+
     const float steering = clamp_unit(raw.steering);
     const float handbrake = std::clamp(raw.handbrake, 0.0f, 1.0f);
 
@@ -81,9 +83,31 @@ void Vehicle::update(const VehicleInput& raw, float dt) {
         load[r] = std::max(0.0f, load[r] + transfer);
     }
 
-    // Longitudinal load transfer feeds the chassis pitch response.
     const float forward_speed = math::dot(state_.velocity, forward);
-    const float drive_accel = throttle * config_.engine_force / config_.mass;
+    const float requested_throttle = clamp_unit(raw.throttle);
+    const float requested_direction = sign(requested_throttle);
+
+    // Direction changes are handled by the drivetrain, not by pretending reverse
+    // is a brake. Holding the opposite direction while moving first applies the
+    // service brakes; only once nearly stopped is the requested gear engaged.
+    float throttle = requested_throttle;
+    float brake = std::clamp(raw.brake, 0.0f, 1.0f);
+    if (std::abs(forward_speed) > config_.direction_change_speed &&
+        requested_direction != 0.0f && requested_direction != sign(forward_speed)) {
+        throttle = 0.0f;
+        brake = std::max(brake, std::min(1.0f, std::abs(requested_throttle)));
+    }
+
+    if (std::abs(forward_speed) <= config_.direction_change_speed || throttle == 0.0f) {
+        state_.gear = throttle > 0.01f ? 1 : (throttle < -0.01f ? -1 : 0);
+    }
+    const float drive_request = std::clamp(throttle, -1.0f, 1.0f);
+    const float drive_force = drive_request >= 0.0f
+        ? drive_request * config_.engine_force
+        : drive_request * config_.reverse_force;
+
+    // Longitudinal load transfer feeds the chassis pitch response.
+    const float drive_accel = drive_force / config_.mass;
     const float brake_accel = brake * config_.brake_force / config_.mass * sign(forward_speed);
     const float transfer = (drive_accel - brake_accel) * config_.mass * 0.42f / config_.wheelbase;
     for (int i = 0; i < 2; ++i) load[i] = std::max(0.0f, load[i] - transfer * 0.5f);
@@ -91,10 +115,12 @@ void Vehicle::update(const VehicleInput& raw, float dt) {
 
     math::Vec3 total_force{};
     float yaw_torque = 0.0f;
-    const float axle_drive[2] = {throttle * config_.engine_force * 0.5f, throttle * config_.engine_force * 0.5f};
+    const float axle_drive[2] = {drive_force * 0.5f, drive_force * 0.5f};
     const float brake_force = brake * config_.brake_force;
     const float lock = std::clamp(config_.differential_lock, 0.0f, 1.0f);
 
+    // Simple open-to-locked differential: wheel load gets the open-diff share,
+    // while differential_lock blends it toward equal torque on both wheels.
     for (int axle = 0; axle < 2; ++axle) {
         const int l = axle * 2, r = l + 1;
         const float ll = std::max(load[l], 1.0f), rl = std::max(load[r], 1.0f);
@@ -102,7 +128,10 @@ void Vehicle::update(const VehicleInput& raw, float dt) {
         const float base_l = axle_drive[axle] * ll / sum;
         const float base_r = axle_drive[axle] * rl / sum;
         const float avg = axle_drive[axle] * 0.5f;
-        const float drive[2] = {base_l * (1.0f - lock) + avg * lock, base_r * (1.0f - lock) + avg * lock};
+        const float drive[2] = {
+            base_l * (1.0f - lock) + avg * lock,
+            base_r * (1.0f - lock) + avg * lock
+        };
 
         for (int side = 0; side < 2; ++side) {
             const int i = axle * 2 + side;
@@ -121,6 +150,8 @@ void Vehicle::update(const VehicleInput& raw, float dt) {
             wheel.slip_ratio = (surface_speed - vlong) / std::max(std::abs(vlong), 2.0f);
             wheel.slip_angle = std::atan2(vlat, std::abs(vlong) + 0.5f);
 
+            // Brakes oppose the actual wheel motion. Drive torque is signed, so
+            // reverse naturally produces negative wheel angular speed and force.
             float fx = drive[side] - brake_force * 0.25f * sign(vlong);
             if (axle == 1) fx -= handbrake * brake_force * 0.20f * sign(vlong);
             const float normal = std::max(load[i], 50.0f);
@@ -141,13 +172,19 @@ void Vehicle::update(const VehicleInput& raw, float dt) {
     const float planar_speed = std::sqrt(state_.velocity.x * state_.velocity.x + state_.velocity.z * state_.velocity.z);
     total_force -= state_.velocity * (config_.rolling_resistance + 0.04f * planar_speed);
     state_.velocity += (total_force / config_.mass) * dt;
-    state_.speed = std::sqrt(state_.velocity.x * state_.velocity.x + state_.velocity.z * state_.velocity.z);
-    if (state_.speed > config_.max_speed) {
-        const float scale = config_.max_speed / state_.speed;
+
+    // Keep the forward and reverse top speeds independent. This also prevents
+    // a reverse gear request from ever accelerating through the forward limit.
+    const float signed_speed = math::dot(state_.velocity, forward);
+    const float speed_limit = signed_speed < 0.0f ? config_.reverse_max_speed : config_.max_speed;
+    const float planar_after_force = std::sqrt(state_.velocity.x * state_.velocity.x + state_.velocity.z * state_.velocity.z);
+    if (planar_after_force > speed_limit) {
+        const float scale = speed_limit / planar_after_force;
         state_.velocity.x *= scale;
         state_.velocity.z *= scale;
-        state_.speed = config_.max_speed;
     }
+    state_.speed = std::sqrt(state_.velocity.x * state_.velocity.x + state_.velocity.z * state_.velocity.z);
+    state_.drivetrain_speed = math::dot(state_.velocity, forward) / std::max(config_.wheel_radius, 0.01f);
 
     const float yaw_inertia = config_.mass * (config_.wheelbase * config_.wheelbase + config_.track_width * config_.track_width) / 12.0f;
     state_.yaw_rate += yaw_torque / std::max(yaw_inertia, 1.0f) * dt;
