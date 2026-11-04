@@ -1,72 +1,64 @@
 # Roadmap
 
-The project explores an original browser-based open-world engine architecture using C++17, WebAssembly and WebGL 2. It does not include or reproduce proprietary game code or assets.
+This project explores an original browser-based 3D engine using C++17, WebAssembly and WebGL 2. The repository already contains early math/camera, world, collision/physics and vehicle prototypes; the milestones below distinguish those prototypes from production-ready systems.
 
-Estimates assume one developer at roughly 8–12 focused hours per week. A full open-world game is far beyond the current bootstrap and is not implied by these milestones.
+Estimates assume one developer at 8–12 focused hours per week.
 
-## M0 — Browser bootstrap (complete)
-- [x] C++17 + CMake project
-- [x] Emscripten/WebAssembly build
-- [x] WebGL 2 rendering smoke test
-- [x] Browser shell and resize handling
-- [x] GitHub Actions build
+## M0 — Browser and rendering bootstrap (implemented)
+- [x] C++17 + CMake / Emscripten build
+- [x] WebGL 2 rendering path and browser shell
+- [x] Resize-aware canvas
+**Exit evidence:** current build workflow and browser smoke test.
 
-**Exit gate:** browser loads the build and renders the smoke-test scene.
+## M1 — Core engine vertical slice (partially implemented; 4–8 weeks)
+- [x] Basic math, camera and transform primitives
+- [x] Minimal world/entity model
+- [x] AABB collision and simple rigid-body integration
+- [x] Vehicle input/state prototype
+- [ ] Unit tests for math, world, collision and vehicle behavior
+- [ ] Stable fixed-step simulation and deterministic test scene
+- [ ] Renderer/resource ownership and lifecycle rules
+**Exit gate:** repeatable browser scene with tested movement, collision and camera behavior.
 
-## M1 — Engine foundation (4–8 weeks)
-- [ ] Math library, transforms and camera
-- [ ] Renderer abstraction and resource lifetime
-- [ ] Input abstraction and frame timing
-- [ ] Minimal world/entity model
-- [ ] Debug overlay and profiling counters
+## M2 — World and resource streaming (2–4 months)
+- [ ] Formal world-coordinate and sector format
+- [ ] Resource manifest and async loading pipeline
+- [ ] Spatial partitioning and bounded memory/streaming budgets
+- [ ] LOD policy and diagnostics
+**Exit gate:** synthetic world streams predictably without unbounded memory growth.
 
-**Exit gate:** a deterministic test scene renders with input and stable frame timing.
-
-## M2 — World representation and streaming prototype (2–4 months)
-- [ ] Spatial partitioning and world-coordinate conventions
-- [ ] Resource manifest and asynchronous loading
-- [ ] Basic LOD and streaming budget
-- [ ] Collision query prototype
-- [ ] Memory and loading diagnostics
-
-**Exit gate:** a synthetic test world streams in/out without unbounded memory growth.
-
-## M3 — Playable vertical slice (3–6 months)
-- [ ] Third-person camera and player controller
-- [ ] Basic collision and interaction
+## M3 — Playable original vertical slice (3–6 months)
+- [ ] Third-person player controller and interaction
 - [ ] One small original test environment
-- [ ] Minimal NPC state simulation
-- [ ] Save/load of project-owned test data
-
-**Exit gate:** a short, repeatable playable loop in an original test scene.
+- [ ] Collision and save/load for project-owned data
+- [ ] Basic NPC state simulation
+**Exit gate:** short, repeatable gameplay loop in original test content.
 
 ## M4 — Simulation systems (6–12 months)
-- [ ] Vehicle movement prototype
-- [ ] Traffic/pedestrian scheduling experiments
+- [ ] Vehicle handling validation and tuning
+- [ ] Traffic/pedestrian scheduling prototype
 - [ ] Mission state machine
-- [ ] Audio runtime and time/weather model
-- [ ] Performance budgets for browser targets
-
+- [ ] Audio and animation runtime
+- [ ] Performance budgets for target browsers
 **Exit gate:** selected systems run together in a bounded demonstration scene.
 
-## M5 — Browser hardening (ongoing; 2–4 months initial pass)
+## M5 — Browser hardening (2–4 months initial pass; ongoing)
 - [ ] Worker-based background jobs where beneficial
 - [ ] Memory and allocation profiling
 - [ ] Compressed resource pipeline
-- [ ] Browser compatibility matrix
-- [ ] Deployment and artifact-size budgets
+- [ ] Browser compatibility and performance matrix
+- [ ] Production deployment and artifact-size budgets
 - [ ] Evaluate WebGPU only after WebGL 2 path is stable
-
-**Exit gate:** reproducible browser builds and documented performance envelope.
+**Exit gate:** reproducible builds and documented performance envelope.
 
 ## Near-term schedule
 
 | Period | Focus | Deliverable |
 |---|---|---|
-| Weeks 1–4 | M1 math, camera, input | Interactive 3D test scene |
-| Weeks 5–8 | M1 renderer/resource interfaces | Stable rendering foundation |
-| Months 3–5 | M2 | Streaming synthetic world |
+| Weeks 1–4 | M1 test coverage and simulation stability | Tested vehicle/collision scene |
+| Weeks 5–8 | M1 renderer/resource lifecycle | Stable engine interfaces |
+| Months 3–5 | M2 | Synthetic streamed world |
 | Months 6–10 | M3 | Playable original vertical slice |
 | Months 11–18 | M4–M5 | Selected simulation demo and browser hardening |
 
-This schedule is deliberately for an engine prototype. Production-scale open-world content, mission parity with any commercial game, and full asset compatibility are out of scope unless separately specified and legally cleared.
+This is an engine prototype schedule, not a promise of commercial-game feature parity or compatibility. Re-estimate after each working vertical slice.
